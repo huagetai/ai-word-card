@@ -1,4 +1,4 @@
-import { GoogleGenAI, GenerateContentResponse } from '@google/genai';
+import { GoogleGenAI, GenerateContentResponse, Modality } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
 import { WordCard, wordCardSchema } from '../types';
 import { getDecks, getWords, supportedContentLanguages, ContentLanguage } from './storageService';
@@ -172,6 +172,33 @@ ${words.join(', ')}
     }
 };
 
+export const generateSpeech = async (word: string, targetLanguage: ContentLanguage): Promise<string | undefined> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text: word }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+            voiceConfig: {
+              // Using a voice that supports multiple languages well.
+              prebuiltVoiceConfig: { voiceName: 'Kore' },
+            },
+        },
+      },
+    });
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    return base64Audio; // Return raw base64 encoded PCM data
+
+  } catch (error) {
+    console.error(`Error generating speech for "${word}":`, error);
+    // Don't throw, just return undefined so the main process can continue
+    return undefined;
+  }
+};
+
+
 const DRAFT_KEY = 'word_generation_draft';
 interface WordGenerationDraft {
   inputWords: string[];
@@ -255,9 +282,15 @@ export const processAndGenerateWords = async (
     } else {
       onProgress(`正在为 "${word}" 生成数据 (${i + 1}/${uniqueInputWords.length})...`);
       const cardData = await generateFlashcardDataForWord(word, targetLanguage, nativeLanguage);
-      const newCard = {
+      
+      onProgress(`正在为 "${word}" 生成发音 (${i + 1}/${uniqueInputWords.length})...`);
+      const audioPronunciation = await generateSpeech(word, targetLanguage);
+
+      const newCard: WordCard = {
         id: uuidv4(),
         ...cardData,
+        audioPronunciation,
+        image: undefined,
       };
       generatedCards.push(newCard);
       

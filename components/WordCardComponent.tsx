@@ -1,9 +1,57 @@
 
+
 import React, { useState } from 'react';
 import { WordCard } from '../types';
-import { VolumeUpIcon, RefreshIcon } from './icons/Icons';
-import { generateFlashcardDataForWord } from '../services/geminiService';
+import { VolumeUpIcon, RefreshIcon, SparklesIcon } from './icons/Icons';
+import { generateFlashcardDataForWord, generateSpeech } from '../services/geminiService';
 import { t, ContentLanguage } from '../services/storageService';
+
+// --- START OF AUDIO HELPERS ---
+
+// Decodes a base64 string into a Uint8Array.
+const decode = (base64: string): Uint8Array => {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+};
+
+/**
+ * Decodes raw PCM audio data into an AudioBuffer for playback.
+ * The Gemini TTS API returns audio at a 24000Hz sample rate.
+ */
+async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
+}
+
+// Manages a single AudioContext instance for the application.
+let audioContext: AudioContext | null = null;
+const getAudioContext = (): AudioContext => {
+    if (!audioContext || audioContext.state === 'closed') {
+        audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+    }
+    return audioContext;
+};
+
+// --- END OF AUDIO HELPERS ---
 
 interface WordCardComponentProps {
   card: WordCard;
@@ -14,11 +62,27 @@ interface WordCardComponentProps {
 const WordCardComponent: React.FC<WordCardComponentProps> = ({ card, isEditable = false, onUpdate }) => {
     
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
 
-  const playAudio = () => {
+  const playAudio = async () => {
     if (card.audioPronunciation) {
-      const audio = new Audio(card.audioPronunciation);
-      audio.play().catch(e => console.error("Error playing audio:", e));
+      try {
+        const ctx = getAudioContext();
+        // Resume context if it was suspended by browser autoplay policy
+        if (ctx.state === 'suspended') {
+            await ctx.resume();
+        }
+        const decodedBytes = decode(card.audioPronunciation);
+        const audioBuffer = await decodeAudioData(decodedBytes, ctx, 24000, 1);
+        
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ctx.destination);
+        source.start();
+      } catch (e) {
+        console.error("Error playing audio:", e);
+        alert("Could not play audio. It might be corrupted or unsupported.");
+      }
     }
   };
   
@@ -29,12 +93,30 @@ const WordCardComponent: React.FC<WordCardComponentProps> = ({ card, isEditable 
     setIsRegenerating(true);
     try {
         const newData = await generateFlashcardDataForWord(card.word, card.targetLanguage as ContentLanguage, card.nativeLanguage as ContentLanguage);
-        onUpdate({ ...card, ...newData }); // Keep original id, but replace all other data
+        onUpdate({ ...card, ...newData }); // Keep original id, audio, but replace all other data
     } catch(error) {
         console.error("Failed to regenerate card:", error);
         alert(t('regenerate_failed', { word: card.word }));
     } finally {
         setIsRegenerating(false);
+    }
+  };
+
+  const handleGenerateAudio = async () => {
+    if (!onUpdate) return;
+    setIsGeneratingAudio(true);
+    try {
+        const audioData = await generateSpeech(card.word, card.targetLanguage as ContentLanguage);
+        if (audioData) {
+            onUpdate({ ...card, audioPronunciation: audioData });
+        } else {
+            alert(`Failed to generate audio for "${card.word}".`);
+        }
+    } catch (error) {
+        console.error(`Failed to generate audio for ${card.word}:`, error);
+        alert(`An error occurred while generating audio for "${card.word}".`);
+    } finally {
+        setIsGeneratingAudio(false);
     }
   };
 
@@ -104,14 +186,28 @@ const WordCardComponent: React.FC<WordCardComponentProps> = ({ card, isEditable 
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 mb-4">
         <div className="flex items-center gap-4">
           <h2 className="text-4xl font-bold text-light tracking-wide">{card.word}</h2>
-          {card.audioPronunciation && (
-            <button onClick={playAudio} className="text-accent hover:text-sky-300 transition-colors">
-              <VolumeUpIcon />
-            </button>
-          )}
+          
+          <div className="flex items-center gap-1">
+            {card.audioPronunciation && (
+                <button onClick={playAudio} className="text-accent hover:text-sky-300 transition-colors">
+                    <VolumeUpIcon />
+                </button>
+            )}
+            {isEditable && (
+                <button 
+                    onClick={handleGenerateAudio} 
+                    disabled={isGeneratingAudio} 
+                    className="p-1 text-dark-text hover:text-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed" 
+                    title={card.audioPronunciation ? "重新生成发音" : "生成发音"}
+                >
+                    {isGeneratingAudio ? <RefreshIcon className="animate-spin h-5 w-5"/> : <RefreshIcon className="h-5 w-5" />}
+                </button>
+            )}
+          </div>
+          
           {isEditable && (
-             <button onClick={handleRegenerate} disabled={isRegenerating} className="p-2 text-dark-text hover:text-accent transition-colors disabled:opacity-50 disabled:cursor-wait" title="重新生成此单词卡">
-                {isRegenerating ? <RefreshIcon className="animate-spin" /> : <RefreshIcon />}
+             <button onClick={handleRegenerate} disabled={isRegenerating} className="p-2 text-dark-text hover:text-accent transition-colors disabled:opacity-50 disabled:cursor-wait" title="重新生成此单词卡的内容">
+                {isRegenerating ? <RefreshIcon className="animate-spin" /> : <SparklesIcon />}
              </button>
           )}
         </div>
