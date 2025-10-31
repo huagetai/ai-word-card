@@ -20,7 +20,7 @@ export interface WordCard {
 export interface CardDeck {
   id: string;
   title: string;
-  cards: WordCard[];
+  cards: string[]; // This is now an array of WordCard IDs
   createdAt: string;
   targetLanguage: string;
   nativeLanguage: string;
@@ -104,6 +104,7 @@ export const wordCardSchema = {
         type: Type.OBJECT,
         properties: {
           word: { type: Type.STRING },
+          // FIX: Changed `String` to `Type.STRING` to match the required enum type for the schema.
           partOfSpeech: { type: Type.STRING, description: "Part of speech abbreviation (e.g., 'n.', 'adv.')" },
           nativeTranslation: { type: Type.STRING, description: "A concise native language translation of the word." }
         },

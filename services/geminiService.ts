@@ -1,4 +1,4 @@
-import { GoogleGenAI, GenerateContentResponse, Modality } from '@google/genai';
+import { GoogleGenAI, GenerateContentResponse, Modality, WordCard as GeminiWordCard } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
 import { WordCard, wordCardSchema } from '../types';
 import { getDecks, getWords, supportedContentLanguages, ContentLanguage } from './storageService';
@@ -145,35 +145,52 @@ Please select the 2-3 most suitable methods for the word "${word}" and provide h
   }
 };
 
-export const generateStoryFromWords = async (title: string, words: string[], targetLanguage: ContentLanguage, nativeLanguage: ContentLanguage): Promise<string> => {
+export const generateStoryFromWords = async (
+    deckTitle: string, 
+    words: string[], 
+    userPrompt: string,
+    imageFile: File | null,
+    targetLanguage: ContentLanguage, 
+    nativeLanguage: ContentLanguage
+): Promise<string> => {
     const targetLanguageName = supportedContentLanguages[targetLanguage];
     const nativeLanguageName = supportedContentLanguages[nativeLanguage];
 
-    const prompt = `
-You are a creative storyteller. Your task is to write a short story (approximately 150-200 words) for a user whose native language is ${nativeLanguageName} and is learning ${targetLanguageName}.
+    const systemPrompt = `You are a creative storyteller. Your task is to write a short story (approximately 150-200 words) for a user whose native language is ${nativeLanguageName} and is learning ${targetLanguageName}.
 
-The story MUST be written in ${targetLanguageName} and naturally incorporate the following vocabulary words:
+**The story MUST incorporate the following vocabulary words:**
 ${words.join(', ')}
 
+**The user has provided the following prompt for the story:**
+"${userPrompt || 'No specific prompt provided. Create a general, interesting story.'}"
+
+If an image is provided, use it as the primary inspiration for the setting, characters, and plot.
+
 **Instructions:**
-1.  The story should be coherent, engaging, and easy to understand for a language learner.
-2.  Use each word correctly in a context that helps illustrate its meaning.
-3.  After writing the story, you **MUST** bold each of the target words using Markdown syntax (e.g., **word**). Do not bold any other words.
-4.  The tone should be encouraging and helpful.
+1.  The story MUST be written in ${targetLanguageName}.
+2.  The story should be coherent, engaging, and relevant to the user's prompt and/or the provided image.
+3.  Use each vocabulary word correctly in a context that helps illustrate its meaning.
+4.  After writing the story, you **MUST** bold each of the target vocabulary words using Markdown syntax (e.g., **word**). Do not bold any other words.
 5.  Do not include a title or any introductory text like "Here is the story:". Just return the story content itself.
 `;
+    
+    const contentParts: any[] = [{ text: systemPrompt }];
+    if(imageFile) {
+        const imagePart = await fileToGenerativePart(imageFile);
+        contentParts.unshift(imagePart);
+    }
 
     try {
         const response: GenerateContentResponse = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
-            contents: [{ parts: [{ text: prompt }] }],
+            contents: [{ parts: contentParts }],
             config: {
                 temperature: 0.8,
             },
         });
         return response.text;
     } catch (error) {
-        console.error(`Error generating story for deck "${title}":`, error);
+        console.error(`Error generating story for deck "${deckTitle}":`, error);
         throw new Error(`Failed to generate a story. Please try again.`);
     }
 };
@@ -247,19 +264,13 @@ export const processAndGenerateWords = async (
 
   // 2. Build a lookup map of existing words from permanent storage
   onProgress('正在加载本地数据...');
-  const allDecks = getDecks();
   const allWords = getWords();
   const existingWordData = new Map<string, Omit<WordCard, 'id'>>();
 
-  allDecks.forEach(deck => {
-    deck.cards.forEach(card => {
-      if (!existingWordData.has(card.word.toLowerCase())) {
-        const { id, ...data } = card;
-        existingWordData.set(card.word.toLowerCase(), data);
-      }
-    });
-  });
-
+  // FIX: The original code had a faulty loop over `allDecks` that caused a crash
+  // because `deck.cards` contains string IDs, not WordCard objects.
+  // The `allWords` array from `getWords()` is the correct single source of truth for all word data.
+  // This single loop correctly populates the map of existing words.
   allWords.forEach(card => {
     if (!existingWordData.has(card.word.toLowerCase())) {
         const { id, ...data } = card;

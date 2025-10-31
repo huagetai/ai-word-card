@@ -44,6 +44,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
     "my_words": "我的单词",
     "no_words_message": "您还没有创建任何单词。",
     "confirm_deck_delete": "您确定要删除这个卡组吗？这也会删除基于该卡组生成的所有短文。",
+    "confirm_word_delete": "您确定要永久删除这个单词吗？它将从所有卡组中移除。",
     "story_generation_failed": "生成短文失败。",
     "confirm_story_delete": "您确定要删除这篇短文吗？",
     "confirm_import": "这将用文件中的内容替换您当前所有的卡组、单词和短文。此操作无法撤销。您确定要继续吗？\n\nThis will replace ALL of your current decks, words, and stories with the content from the file. This action cannot be undone. Are you sure you want to continue?",
@@ -118,6 +119,13 @@ const translations: Record<UILanguage, Record<string, string>> = {
     "known": "已掌握",
     // Story View
     "story_generated_from": "基于 {count} 个单词生成于 {date}",
+    // Story Generation Page
+    "generate_new_story": "生成新短文",
+    "story_prompt": "短文要求",
+    "story_prompt_placeholder": "例如：写一个关于机器人热爱烹饪的有趣故事",
+    "inspiration_image_optional": "灵感图片 (可选)",
+    "upload_inspiration_image": "上传图片获取灵感",
+    "story_generation_page_title": "AI 短文生成器",
   },
   en: {
     "intelligent_flashcards": "Intelligent Flashcards",
@@ -142,6 +150,7 @@ const translations: Record<UILanguage, Record<string, string>> = {
     "my_words": "My Words",
     "no_words_message": "You haven't created any words yet.",
     "confirm_deck_delete": "Are you sure you want to delete this deck? This will also delete all stories generated from this deck.",
+    "confirm_word_delete": "Are you sure you want to permanently delete this word? It will be removed from all decks.",
     "story_generation_failed": "Failed to generate story.",
     "confirm_story_delete": "Are you sure you want to delete this story?",
     "confirm_import": "This will replace ALL of your current decks, words, and stories with the content from the file. This action cannot be undone. Are you sure you want to continue?",
@@ -216,6 +225,13 @@ const translations: Record<UILanguage, Record<string, string>> = {
     "known": "Known",
     // Story View
     "story_generated_from": "Generated from {count} words on {date}",
+    // Story Generation Page
+    "generate_new_story": "Generate New Story",
+    "story_prompt": "Story Prompt",
+    "story_prompt_placeholder": "e.g., Write a funny story about a robot who loves to cook",
+    "inspiration_image_optional": "Inspiration Image (Optional)",
+    "upload_inspiration_image": "Upload Image for Inspiration",
+    "story_generation_page_title": "AI Story Generator",
   }
 };
 
@@ -292,7 +308,7 @@ const migrateDeck = (deck: any): CardDeck => {
     ...deck,
     targetLanguage: deck.targetLanguage || 'en',
     nativeLanguage: deck.nativeLanguage || 'zh',
-    cards: Array.isArray(deck.cards) ? deck.cards.map(migrateWordCard) : [],
+    cards: Array.isArray(deck.cards) ? deck.cards : [],
   };
 };
 
@@ -309,7 +325,38 @@ const migrateStory = (story: any): Story => {
 export const getDecks = (): CardDeck[] => {
   try {
     const decksJson = localStorage.getItem(DECKS_KEY);
-    const decks = decksJson ? JSON.parse(decksJson) : [];
+    if (!decksJson) return [];
+    
+    let decks = JSON.parse(decksJson);
+
+    // One-time migration check: if a deck's card list contains objects instead of strings
+    if (decks.length > 0 && decks[0].cards.length > 0 && typeof decks[0].cards[0] === 'object' && decks[0].cards[0] !== null) {
+      console.log("Old deck format detected. Running data migration...");
+      
+      const existingWords = getWords();
+      const allWordsMap = new Map<string, WordCard>(existingWords.map(w => [w.id, w]));
+
+      const migratedDecks: CardDeck[] = decks.map((deck: any) => {
+        const cardIds: string[] = [];
+        if (Array.isArray(deck.cards)) {
+          deck.cards.forEach((card: any) => {
+            if (card && card.id) {
+              cardIds.push(card.id);
+              if (!allWordsMap.has(card.id)) {
+                allWordsMap.set(card.id, migrateWordCard(card));
+              }
+            }
+          });
+        }
+        return { ...migrateDeck(deck), cards: cardIds };
+      });
+      
+      saveWords(Array.from(allWordsMap.values()));
+      saveDecks(migratedDecks);
+      console.log("Migration complete.");
+      return migratedDecks;
+    }
+    
     return decks.map(migrateDeck);
   } catch (error) {
     console.error("Error parsing decks from localStorage", error);

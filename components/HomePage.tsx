@@ -6,7 +6,6 @@ import {
   t, UILanguage, ContentLanguage, setUILanguage, getUILanguage, setNativeLanguage, getNativeLanguage,
   setTargetLanguage, getTargetLanguage, supportedUILanguages, supportedContentLanguages
 } from '../services/storageService';
-import { generateStoryFromWords } from '../services/geminiService';
 import { PlusCircleIcon, PencilIcon, TrashIcon, DownloadIcon, UploadIcon, PlayIcon, SparklesIcon, BookOpenIcon, SettingsIcon } from './icons/Icons';
 
 interface HomePageProps {
@@ -15,35 +14,25 @@ interface HomePageProps {
   onEditWord: (word: WordCard) => void;
   onStudyDeck: (deck: CardDeck) => void;
   onViewStory: (story: Story) => void;
+  onNavigateToGenerateStory: (deck: CardDeck) => void;
   onNavigateToSettings: () => void;
 }
 
-const HomePage: React.FC<HomePageProps> = ({ onCreate, onEditDeck, onEditWord, onStudyDeck, onViewStory, onNavigateToSettings }) => {
+const HomePage: React.FC<HomePageProps> = ({ onCreate, onEditDeck, onEditWord, onStudyDeck, onViewStory, onNavigateToGenerateStory, onNavigateToSettings }) => {
   const [decks, setDecks] = useState<CardDeck[]>([]);
   const [stories, setStories] = useState<Story[]>([]);
   const [myWords, setMyWords] = useState<WordCard[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [generatingStoryDeckId, setGeneratingStoryDeckId] = useState<string | null>(null);
 
   useEffect(() => {
-    const allDecks = getDecks();
-    const independentWords = getWords();
-
-    // Combine words from decks and independent words
-    const deckWords = allDecks.flatMap(deck => deck.cards);
-    const combinedWords = [...independentWords, ...deckWords];
-
-    // De-duplicate using word ID to create a unified list
-    const uniqueWordsMap = new Map<string, WordCard>();
-    combinedWords.forEach(word => {
-      uniqueWordsMap.set(word.id, word);
-    });
-    const allUniqueWords = Array.from(uniqueWordsMap.values());
-    
-    setDecks(allDecks);
-    setStories(getStories());
-    setMyWords(allUniqueWords);
+    reloadData();
   }, []);
+
+  const reloadData = () => {
+    setDecks(getDecks());
+    setStories(getStories());
+    setMyWords(getWords());
+  };
 
   const handleDeleteDeck = (deckId: string) => {
     if (window.confirm(t('confirm_deck_delete'))) {
@@ -57,33 +46,20 @@ const HomePage: React.FC<HomePageProps> = ({ onCreate, onEditDeck, onEditWord, o
     }
   };
 
-  const handleGenerateStory = async (deck: CardDeck) => {
-    if (generatingStoryDeckId) return;
-    setGeneratingStoryDeckId(deck.id);
-    try {
-      const words = deck.cards.map(card => card.word);
-      const storyContent = await generateStoryFromWords(deck.title, words, deck.targetLanguage as ContentLanguage, deck.nativeLanguage as ContentLanguage);
-      
-      const newStory: Story = {
-        id: uuidv4(),
-        deckId: deck.id,
-        title: `${deck.title} - AI Story`,
-        content: storyContent,
-        words: words,
-        createdAt: new Date().toISOString(),
-        targetLanguage: deck.targetLanguage,
-        nativeLanguage: deck.nativeLanguage,
-      };
-      
-      const updatedStories = [newStory, ...getStories()];
-      saveStories(updatedStories);
-      setStories(updatedStories);
-      
-    } catch (error) {
-      console.error(error);
-      alert((error as Error).message || t('story_generation_failed'));
-    } finally {
-      setGeneratingStoryDeckId(null);
+  const handleDeleteWord = (wordId: string) => {
+    if (window.confirm(t('confirm_word_delete'))) {
+        // Remove from master word list
+        const updatedWords = myWords.filter(word => word.id !== wordId);
+        saveWords(updatedWords);
+        setMyWords(updatedWords);
+
+        // Remove from all decks
+        const updatedDecks = decks.map(deck => ({
+            ...deck,
+            cards: deck.cards.filter(id => id !== wordId)
+        }));
+        saveDecks(updatedDecks);
+        setDecks(updatedDecks);
     }
   };
 
@@ -130,24 +106,33 @@ const HomePage: React.FC<HomePageProps> = ({ onCreate, onEditDeck, onEditWord, o
         if (data && typeof data === 'object' && !Array.isArray(data)) {
           if (window.confirm(t('confirm_import'))) {
             
-            const importedDecks = (Array.isArray(data.decks) ? data.decks : []) as CardDeck[];
-            const importedWords = (Array.isArray(data.words) ? data.words : []) as WordCard[];
-            const importedStories = (Array.isArray(data.stories) ? data.stories : []) as Story[];
+            let importedDecks = (Array.isArray(data.decks) ? data.decks : []) as any[];
+            let importedWords = (Array.isArray(data.words) ? data.words : []) as WordCard[];
+
+            // Handle migration of imported data if it's in the old format
+            if (importedDecks.length > 0 && importedDecks[0].cards.length > 0 && typeof importedDecks[0].cards[0] === 'object') {
+                const allWordsMap = new Map<string, WordCard>(importedWords.map(w => [w.id, w]));
+                const migratedDecks = importedDecks.map(deck => {
+                    const cardIds: string[] = [];
+                    deck.cards.forEach((card: any) => {
+                        if(card && card.id) {
+                            cardIds.push(card.id);
+                            if(!allWordsMap.has(card.id)) {
+                                allWordsMap.set(card.id, card);
+                            }
+                        }
+                    });
+                    return {...deck, cards: cardIds};
+                });
+                importedDecks = migratedDecks;
+                importedWords = Array.from(allWordsMap.values());
+            }
 
             saveDecks(importedDecks);
             saveWords(importedWords);
-            saveStories(importedStories);
+            saveStories(Array.isArray(data.stories) ? data.stories : []);
 
-            setDecks(importedDecks);
-            setStories(importedStories);
-
-            const deckWords = importedDecks.flatMap(deck => deck.cards);
-            const combinedWords = [...importedWords, ...deckWords];
-            const uniqueWordsMap = new Map<string, WordCard>();
-            combinedWords.forEach(word => {
-                uniqueWordsMap.set(word.id, word);
-            });
-            setMyWords(Array.from(uniqueWordsMap.values()));
+            reloadData();
 
             alert(t('import_success'));
           }
@@ -211,17 +196,13 @@ const HomePage: React.FC<HomePageProps> = ({ onCreate, onEditDeck, onEditWord, o
                         {t('start_learning')}
                     </button>
                      <button
-                      onClick={() => handleGenerateStory(deck)}
-                      disabled={deck.cards.length < 3 || !!generatingStoryDeckId}
+                      onClick={() => onNavigateToGenerateStory(deck)}
+                      disabled={deck.cards.length < 3}
                       className="flex items-center gap-2 bg-slate-600 text-light py-2 px-3 rounded-lg hover:bg-slate-500 transition-colors shadow-md text-sm disabled:bg-slate-700 disabled:cursor-not-allowed disabled:text-slate-500"
                       aria-label={`Generate story for ${deck.title}`}
                       title={deck.cards.length < 3 ? t('story_deck_size_tooltip') : t('story_generation_tooltip')}
                     >
-                      {generatingStoryDeckId === deck.id ? (
-                        <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-light"></div> {t('generating')}</>
-                      ) : (
-                        <><SparklesIcon /> {t('generate_story')}</>
-                      )}
+                      <SparklesIcon /> {t('generate_story')}
                     </button>
                     <button onClick={() => onEditDeck(deck)} className="p-2 text-dark-text hover:text-accent transition-colors" aria-label={`Edit ${deck.title}`}><PencilIcon /></button>
                     <button onClick={() => handleDeleteDeck(deck.id)} className="p-2 text-dark-text hover:text-red-500 transition-colors" aria-label={`Delete ${deck.title}`}><TrashIcon /></button>
@@ -280,9 +261,14 @@ const HomePage: React.FC<HomePageProps> = ({ onCreate, onEditDeck, onEditWord, o
                     <span className="text-xl font-semibold">{word.word}</span>
                     <span className="text-dark-text ml-4">{word.partOfSpeech.abbreviation} ({word.partOfSpeech.nativeName})</span>
                   </div>
-                  <button onClick={() => onEditWord(word)} className="p-2 text-dark-text hover:text-accent transition-colors" aria-label={`Edit ${word.word}`}>
-                    <PencilIcon />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => onEditWord(word)} className="p-2 text-dark-text hover:text-accent transition-colors" aria-label={`Edit ${word.word}`}>
+                        <PencilIcon />
+                    </button>
+                    <button onClick={() => handleDeleteWord(word.id)} className="p-2 text-dark-text hover:text-red-500 transition-colors" aria-label={`Delete ${word.word}`}>
+                        <TrashIcon />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

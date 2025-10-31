@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { CardDeck, WordCard } from '../types';
 import WordCardComponent from './WordCardComponent';
-import { ArrowLeftIcon, SaveIcon, SparklesIcon } from './icons/Icons';
+import { ArrowLeftIcon, SaveIcon, SparklesIcon, MinusCircleIcon } from './icons/Icons';
 import { processAndGenerateWords } from '../services/geminiService';
-import { t, ContentLanguage } from '../services/storageService';
+import { t, ContentLanguage, getWords, saveWords } from '../services/storageService';
 
 interface EditDeckPageProps {
   initialDeck: CardDeck;
@@ -15,12 +15,22 @@ const DRAFT_KEY_PREFIX = 'draft_deck_';
 
 const EditDeckPage: React.FC<EditDeckPageProps> = ({ initialDeck, onSave, onCancel }) => {
   const [deck, setDeck] = useState<CardDeck>(initialDeck);
+  const [displayedCards, setDisplayedCards] = useState<WordCard[]>([]);
   const [wordsToAdd, setWordsToAdd] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [addProgress, setAddProgress] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
   const debounceTimeoutRef = useRef<number | null>(null);
   const draftKey = `${DRAFT_KEY_PREFIX}${initialDeck.id}`;
+  
+  const allWordsMap = useMemo(() => new Map(getWords().map(w => [w.id, w])), []);
+
+  useEffect(() => {
+    const cardsForDeck = deck.cards
+      .map(id => allWordsMap.get(id))
+      .filter((c): c is WordCard => c !== undefined);
+    setDisplayedCards(cardsForDeck);
+  }, [deck.cards, allWordsMap]);
 
   // Restore draft on mount
   useEffect(() => {
@@ -73,12 +83,20 @@ const EditDeckPage: React.FC<EditDeckPageProps> = ({ initialDeck, onSave, onCanc
   };
   
   const handleCardUpdate = (updatedCard: WordCard) => {
-    const cardIndex = deck.cards.findIndex(c => c.id === updatedCard.id);
-    if(cardIndex > -1) {
-        const newCards = [...deck.cards];
-        newCards[cardIndex] = updatedCard;
-        setDeck({...deck, cards: newCards});
+    // Update the word in the global word list
+    const allWords = getWords();
+    const wordIndex = allWords.findIndex(w => w.id === updatedCard.id);
+    if (wordIndex !== -1) {
+        allWords[wordIndex] = updatedCard;
+        saveWords(allWords);
     }
+    
+    // Update the local state for display
+    setDisplayedCards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
+  };
+
+  const handleRemoveWordFromDeck = (wordId: string) => {
+    setDeck(prev => ({...prev, cards: prev.cards.filter(id => id !== wordId)}));
   };
 
   const handleAddWords = async () => {
@@ -98,11 +116,22 @@ const EditDeckPage: React.FC<EditDeckPageProps> = ({ initialDeck, onSave, onCanc
           deck.nativeLanguage as ContentLanguage, 
           setAddProgress
       );
+
+      // Save new/updated words to the master list
+      const existingWords = getWords();
+      const newCardsMap = new Map(newCards.map(c => [c.id, c]));
+      const updatedWordsList = existingWords.filter(w => !newCardsMap.has(w.id));
+      updatedWordsList.push(...newCards);
+      saveWords(updatedWordsList);
+
+      // Add new card IDs to the current deck
+      const newCardIds = newCards.map(c => c.id);
       setDeck(prevDeck => ({
         ...prevDeck,
-        cards: [...prevDeck.cards, ...newCards],
+        cards: [...new Set([...prevDeck.cards, ...newCardIds])], // Use Set to avoid duplicates
       }));
       setWordsToAdd('');
+
     } catch (err: any) {
       setAddError(err.message || t('add_word_error'));
     } finally {
@@ -164,9 +193,18 @@ const EditDeckPage: React.FC<EditDeckPageProps> = ({ initialDeck, onSave, onCanc
         </div>
 
         <div className="space-y-6">
-            <h2 className="text-2xl font-semibold">{t('words_in_deck')} ({deck.cards.length})</h2>
-            {deck.cards.map(card => (
-                <WordCardComponent key={card.id} card={card} onUpdate={handleCardUpdate} isEditable={true}/>
+            <h2 className="text-2xl font-semibold">{t('words_in_deck')} ({displayedCards.length})</h2>
+            {displayedCards.map(card => (
+                <div key={card.id} className="relative group">
+                    <WordCardComponent card={card} onUpdate={handleCardUpdate} isEditable={true}/>
+                    <button 
+                        onClick={() => handleRemoveWordFromDeck(card.id)}
+                        className="absolute -top-3 -right-3 bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"
+                        aria-label={`Remove ${card.word} from deck`}
+                    >
+                        <MinusCircleIcon />
+                    </button>
+                </div>
             ))}
         </div>
     </div>

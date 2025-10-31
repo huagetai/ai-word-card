@@ -6,10 +6,11 @@ import EditDeckPage from './components/EditDeckPage';
 import EditWordsPage from './components/EditWordsPage';
 import StudyPage from './components/StudyPage';
 import StoryViewPage from './components/StoryViewPage';
+import GenerateStoryPage from './components/GenerateStoryPage';
 import SettingsPage from './components/SettingsPage';
-import { saveDecks, getDecks, saveWords, getWords, getUILanguage, onUILanguageChange, offUILanguageChange, UILanguage } from './services/storageService';
+import { saveDecks, getDecks, saveWords, getWords, getStories, saveStories, getUILanguage, onUILanguageChange, offUILanguageChange, UILanguage } from './services/storageService';
 
-export type View = 'home' | 'create' | 'editDeck' | 'editWords' | 'study' | 'storyView' | 'settings';
+export type View = 'home' | 'create' | 'editDeck' | 'editWords' | 'study' | 'storyView' | 'settings' | 'generateStory';
 
 export interface EditingDeck {
   deck: CardDeck;
@@ -22,6 +23,7 @@ const App: React.FC = () => {
   const [editingWords, setEditingWords] = useState<WordCard[] | null>(null);
   const [studyingDeck, setStudyingDeck] = useState<CardDeck | null>(null);
   const [viewingStory, setViewingStory] = useState<Story | null>(null);
+  const [generatingStoryForDeck, setGeneratingStoryForDeck] = useState<CardDeck | null>(null);
   const [uiLang, setUiLang] = useState<UILanguage>(getUILanguage());
 
   useEffect(() => {
@@ -64,6 +66,11 @@ const App: React.FC = () => {
     setViewingStory(story);
     navigateTo('storyView');
   }, []);
+
+  const handleNavigateToGenerateStory = useCallback((deck: CardDeck) => {
+    setGeneratingStoryForDeck(deck);
+    navigateTo('generateStory');
+  }, []);
   
   const handleNavigateToSettings = useCallback(() => {
     navigateTo('settings');
@@ -86,33 +93,24 @@ const App: React.FC = () => {
   const handleSaveWords = useCallback((wordsToSave: WordCard[]) => {
     // Save/update the words in the main word list
     const existingWords = getWords();
-    const wordsToSaveIds = new Set(wordsToSave.map(w => w.id));
-    const otherWords = existingWords.filter(w => !wordsToSaveIds.has(w.id));
-    const finalWords = [...wordsToSave, ...otherWords];
-    saveWords(finalWords);
-
-    // Also update these words if they exist inside any decks
-    const allDecks = getDecks();
     const wordsToSaveMap = new Map(wordsToSave.map(w => [w.id, w]));
-    const updatedDecks = allDecks.map(deck => {
-        let deckHasChanged = false;
-        const updatedCards = deck.cards.map(card => {
-            if (wordsToSaveMap.has(card.id)) {
-                deckHasChanged = true;
-                return wordsToSaveMap.get(card.id)!;
-            }
-            return card;
-        });
-
-        if (deckHasChanged) {
-            return { ...deck, cards: updatedCards };
-        }
-        return deck;
-    });
-    saveDecks(updatedDecks);
+    
+    // Combine old words (that aren't being updated) with the new/updated words
+    const updatedWordsList = existingWords.filter(w => !wordsToSaveMap.has(w.id));
+    updatedWordsList.push(...wordsToSave);
+    
+    saveWords(updatedWordsList);
 
     navigateTo('home');
     setEditingWords(null);
+  }, []);
+
+  const handleSaveStory = useCallback((story: Story) => {
+    const stories = getStories();
+    stories.unshift(story);
+    saveStories(stories);
+    setGeneratingStoryForDeck(null);
+    navigateTo('home');
   }, []);
 
   const renderView = () => {
@@ -139,11 +137,16 @@ const App: React.FC = () => {
           return <StoryViewPage story={viewingStory} onNavigateBack={() => { setViewingStory(null); navigateTo('home'); }} />;
         }
         return null;
+      case 'generateStory':
+        if (generatingStoryForDeck) {
+          return <GenerateStoryPage deck={generatingStoryForDeck} onStoryGenerated={handleSaveStory} onCancel={() => { setGeneratingStoryForDeck(null); navigateTo('home'); }} />;
+        }
+        return null;
       case 'settings':
         return <SettingsPage onNavigateBack={() => navigateTo('home')} />;
       case 'home':
       default:
-        return <HomePage onCreate={handleCreate} onEditDeck={(deck) => handleEditDeck(deck, false)} onEditWord={handleEditWord} onStudyDeck={handleStudyDeck} onViewStory={handleViewStory} onNavigateToSettings={handleNavigateToSettings} />;
+        return <HomePage onCreate={handleCreate} onEditDeck={(deck) => handleEditDeck(deck, false)} onEditWord={handleEditWord} onStudyDeck={handleStudyDeck} onViewStory={handleViewStory} onNavigateToGenerateStory={handleNavigateToGenerateStory} onNavigateToSettings={handleNavigateToSettings} />;
     }
   };
 

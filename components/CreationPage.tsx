@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { CardDeck, WordCard } from '../types';
 import { processAndGenerateWords, generateWordList } from '../services/geminiService';
 import { ArrowLeftIcon, SparklesIcon, ImageIcon } from './icons/Icons';
-import { t, getNativeLanguage, getTargetLanguage, ContentLanguage } from '../services/storageService';
+import { t, getNativeLanguage, getTargetLanguage, ContentLanguage, getWords, saveWords } from '../services/storageService';
 
 
 interface CreationPageProps {
@@ -90,12 +90,18 @@ const CreationPage: React.FC<CreationPageProps> = ({ onNavigateBack, onDeckGener
       const targetLanguage = getTargetLanguage();
       const nativeLanguage = getNativeLanguage();
       const generatedCards = await processAndGenerateWords(words, targetLanguage, nativeLanguage, setProgress);
+      
+      // Save newly generated/retrieved words to the master list
+      const existingWords = getWords();
+      const generatedCardsMap = new Map(generatedCards.map(c => [c.id, c]));
+      const existingWordsFiltered = existingWords.filter(w => !generatedCardsMap.has(w.id));
+      saveWords([...existingWordsFiltered, ...generatedCards]);
 
       if (mode === 'deck') {
         const newDeck: CardDeck = {
           id: uuidv4(),
           title: deckTitle,
-          cards: generatedCards,
+          cards: generatedCards.map(c => c.id), // Store only IDs
           createdAt: new Date().toISOString(),
           targetLanguage,
           nativeLanguage,

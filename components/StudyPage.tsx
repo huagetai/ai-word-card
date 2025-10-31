@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { CardDeck, WordCard } from '../types';
 import WordCardComponent from './WordCardComponent';
 import { ArrowLeftIcon } from './icons/Icons';
-import { t } from '../services/storageService';
+import { t, getWords } from '../services/storageService';
 
 interface StudyPageProps {
   deck: CardDeck;
@@ -27,15 +26,22 @@ const StudyPage: React.FC<StudyPageProps> = ({ deck, onEndSession }) => {
   const [isFlipped, setIsFlipped] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  
+  const deckCards = useMemo(() => {
+      const allWordsMap = new Map(getWords().map(w => [w.id, w]));
+      return deck.cards
+          .map(id => allWordsMap.get(id))
+          .filter((c): c is WordCard => c !== undefined);
+  }, [deck]);
 
   useEffect(() => {
-    if (deck.cards.length > 0) {
-      setSessionQueue(shuffleArray(deck.cards));
+    if (deckCards.length > 0) {
+      setSessionQueue(shuffleArray(deckCards));
       setSessionComplete(false);
     } else {
       setSessionComplete(true);
     }
-  }, [deck]);
+  }, [deckCards]);
 
   const currentCard = sessionQueue[currentIndex];
 
