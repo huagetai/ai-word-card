@@ -44,12 +44,12 @@ export const recognizeWordsInImage = async (file: File): Promise<string[]> => {
   }
 };
 
-export const generateWordList = async (prompt: string, targetLanguage: ContentLanguage, nativeLanguage: ContentLanguage): Promise<string[]> => {
+export const generateWordList = async (prompt: string, imageFile: File | null, targetLanguage: ContentLanguage, nativeLanguage: ContentLanguage): Promise<string[]> => {
   const targetLanguageName = supportedContentLanguages[targetLanguage];
   const nativeLanguageName = supportedContentLanguages[nativeLanguage];
 
   const systemPrompt = `You are a vocabulary expert for a user whose native language is ${nativeLanguageName} and is learning ${targetLanguageName}. 
-  Your task is to generate a list of words based on the user's request.
+  Your task is to generate a list of words based on the user's request, which may include an image for context.
   
   **Instructions:**
   - The words you generate MUST be in ${targetLanguageName}.
@@ -59,9 +59,15 @@ export const generateWordList = async (prompt: string, targetLanguage: ContentLa
   `;
   
   try {
+    const parts = [{ text: prompt }];
+    if (imageFile) {
+        const imagePart = await fileToGenerativePart(imageFile);
+        parts.unshift(imagePart as any); // Put image first
+    }
+
     const response: GenerateContentResponse = await ai.models.generateContent({
       model: 'gemini-2.5-pro',
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts }],
       config: {
         systemInstruction: systemPrompt,
         temperature: 0.7,

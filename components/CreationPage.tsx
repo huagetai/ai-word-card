@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { CardDeck, WordCard } from '../types';
-import { processAndGenerateWords, recognizeWordsInImage, generateWordList } from '../services/geminiService';
+import { processAndGenerateWords, generateWordList } from '../services/geminiService';
 import { ArrowLeftIcon, SparklesIcon, ImageIcon } from './icons/Icons';
 import { t, getNativeLanguage, getTargetLanguage, ContentLanguage } from '../services/storageService';
 
@@ -23,7 +23,7 @@ const CreationPage: React.FC<CreationPageProps> = ({ onNavigateBack, onDeckGener
   const [progress, setProgress] = useState<string>('');
 
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [isRecognizing, setIsRecognizing] = useState<boolean>(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [wordListPrompt, setWordListPrompt] = useState<string>('');
@@ -33,26 +33,13 @@ const CreationPage: React.FC<CreationPageProps> = ({ onNavigateBack, onDeckGener
     const file = event.target.files?.[0];
     if (!file) return;
 
-    setPrompt('');
+    setImageFile(file);
     const previewUrl = URL.createObjectURL(file);
     setImagePreview(previewUrl);
-    
-    setIsRecognizing(true);
-    setError(null);
-    try {
-      const words = await recognizeWordsInImage(file);
-      if (words.length > 0) {
-        setPrompt(words.join(',\n'));
-      } else {
-        setError(t('image_recognition_failed'));
-      }
-    } catch (err: any) {
-      setError(err.message || t('image_processing_failed'));
-    } finally {
-      setIsRecognizing(false);
-      if (event.target) {
-        event.target.value = '';
-      }
+
+    // Reset file input value to allow re-uploading the same file
+    if (event.target) {
+      event.target.value = '';
     }
   };
 
@@ -64,7 +51,7 @@ const CreationPage: React.FC<CreationPageProps> = ({ onNavigateBack, onDeckGener
     try {
         const targetLanguage = getTargetLanguage();
         const nativeLanguage = getNativeLanguage();
-        const words = await generateWordList(wordListPrompt, targetLanguage, nativeLanguage);
+        const words = await generateWordList(wordListPrompt, imageFile, targetLanguage, nativeLanguage);
         
         if (words.length > 0) {
             setPrompt(prev => {
@@ -134,45 +121,53 @@ const CreationPage: React.FC<CreationPageProps> = ({ onNavigateBack, onDeckGener
       <h1 className="text-4xl font-bold mb-8">{t('create_new_word_cards')}</h1>
 
       <div className="space-y-6 bg-secondary p-8 rounded-xl shadow-lg">
-        <div>
-          <label className="text-lg font-semibold text-dark-text block mb-2">{t('source_image_optional')}</label>
-          <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/*" />
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isRecognizing || isLoading}
-            className="w-full flex justify-center items-center gap-3 py-3 px-6 bg-primary text-light border border-slate-600 rounded-lg hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <ImageIcon />
-            {isRecognizing ? t('recognizing') : t('upload_image_prompt')}
-          </button>
-
-          {isRecognizing && <div className="text-center mt-2 text-accent">{t('processing_image')}</div>}
-
-          {imagePreview && (
-              <div className="mt-4 relative">
-                  <img src={imagePreview} alt="Uploaded preview" className="w-full max-h-60 object-contain rounded-lg bg-primary" />
-                  <button 
-                    onClick={() => {setImagePreview(null); setPrompt('')}}
-                    className="absolute top-2 right-2 bg-black/50 text-white rounded-full h-7 w-7 flex items-center justify-center text-lg hover:bg-black/80 transition-colors"
-                    aria-label={t('remove_image')}
-                  >
-                      &times;
-                  </button>
-              </div>
-          )}
-        </div>
-        
         <div className="bg-primary p-4 rounded-lg border border-slate-600">
           <label className="text-lg font-semibold text-dark-text block mb-2">{t('ai_assistant_for_words')}</label>
+          
+          <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/*" disabled={isLoading} />
+          
+          <div className="mb-4">
+            {imagePreview ? (
+              <div className="relative">
+                <img src={imagePreview} alt="AI assistant context" className="w-full max-h-48 object-contain rounded-lg bg-black/20" />
+                <button 
+                  onClick={() => {
+                    setImagePreview(null);
+                    setImageFile(null);
+                  }}
+                  className="absolute top-2 right-2 bg-black/50 text-white rounded-full h-7 w-7 flex items-center justify-center text-lg hover:bg-black/80 transition-colors"
+                  aria-label={t('remove_image')}
+                  disabled={isLoading}
+                >
+                  &times;
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading}
+                className="w-full flex justify-center items-center gap-3 py-3 px-6 bg-slate-700 text-light border border-slate-600 rounded-lg hover:bg-slate-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ImageIcon />
+                {t('ai_upload_image_context')}
+              </button>
+            )}
+          </div>
+          
           <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                  type="text"
-                  value={wordListPrompt}
-                  onChange={(e) => setWordListPrompt(e.target.value)}
-                  placeholder={t('word_list_prompt_placeholder')}
-                  className="flex-grow p-2 bg-slate-700 border border-slate-500 rounded-lg text-light focus:ring-2 focus:ring-accent focus:outline-none"
-                  disabled={isLoading || isGeneratingWords}
-              />
+              <div className="relative flex-grow">
+                <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                    <SparklesIcon />
+                </div>
+                <input
+                    type="text"
+                    value={wordListPrompt}
+                    onChange={(e) => setWordListPrompt(e.target.value)}
+                    placeholder={t('word_list_prompt_placeholder')}
+                    className="w-full p-2 pl-10 bg-slate-700 border border-slate-500 rounded-lg text-light focus:ring-2 focus:ring-accent focus:outline-none"
+                    disabled={isLoading || isGeneratingWords}
+                />
+              </div>
               <button
                   onClick={handleGenerateWordList}
                   disabled={isLoading || isGeneratingWords || !wordListPrompt}
